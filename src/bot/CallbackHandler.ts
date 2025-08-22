@@ -1,14 +1,17 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { TipService } from '../services/TipService';
+import { WalletManager } from '../ton/WalletManager';
 import { TipRequest } from '../types';
 
 export class CallbackHandler {
   private bot: TelegramBot;
   private tipService: TipService;
+  private walletManager: WalletManager;
 
-  constructor(bot: TelegramBot, tipService: TipService) {
+  constructor(bot: TelegramBot, tipService: TipService, walletManager: WalletManager) {
     this.bot = bot;
     this.tipService = tipService;
+    this.walletManager = walletManager;
     this.setupCallbacks();
   }
 
@@ -40,9 +43,10 @@ export class CallbackHandler {
     
     if (parts.length < 5) return;
 
-    const fromUserId = parseInt(parts[2]);
-    const toUsername = parts[3];
-    const amount = parseFloat(parts[4]);
+    const tipType = parts[2]; // 'username' or 'address'
+    const fromUserId = parseInt(parts[3]);
+    const recipient = parts[4];
+    const amount = parseFloat(parts[5]);
 
     // Only the sender can confirm
     if (from.id !== fromUserId) {
@@ -57,36 +61,61 @@ export class CallbackHandler {
     }
 
     try {
-      // Find recipient user (mock - in reality search group members)
-      const toUserId = await this.findUserByUsername(toUsername, message.chat.id);
-      
-      if (!toUserId) {
-        await this.bot.editMessageText(
-          `❌ User @${toUsername} not found.`,
-          {
-            chat_id: message.chat.id,
-            message_id: message.message_id
-          }
-        );
-        return;
+      let recipientAddress: string;
+      let displayName: string;
+
+      if (tipType === 'username') {
+        // Find user by username and get their wallet address
+        const toUserId = await this.findUserByUsername(recipient, message.chat.id);
+        
+        if (!toUserId) {
+          await this.bot.editMessageText(
+            `❌ User @${recipient} not found or hasn't connected wallet.`,
+            {
+              chat_id: message.chat.id,
+              message_id: message.message_id
+            }
+          );
+          return;
+        }
+
+        // Get user's wallet address from our database
+        const userWallet = await this.getUserWallet(toUserId);
+        if (!userWallet) {
+          await this.bot.editMessageText(
+            `❌ @${recipient} hasn't connected their wallet yet.`,
+            {
+              chat_id: message.chat.id,
+              message_id: message.message_id
+            }
+          );
+          return;
+        }
+
+        recipientAddress = userWallet;
+        displayName = `@${recipient}`;
+      } else {
+        // Direct wallet address
+        recipientAddress = recipient;
+        displayName = `\`${recipient.substring(0, 6)}...${recipient.substring(recipient.length - 6)}\``;
       }
 
       // Create tip request
       const tipRequest: TipRequest = {
         fromUserId,
-        toUserId,
-        toUsername,
+        toUserId: tipType === 'username' ? await this.findUserByUsername(recipient, message.chat.id) || 0 : 0,
+        toUsername: tipType === 'username' ? recipient : undefined,
         amount,
         chatId: message.chat.id,
         messageId: message.message_id
       };
 
-      // Start tip process
-      const transaction = await this.tipService.processTip(tipRequest);
+      // Start tip process - directly send to address
+      const transaction = await this.processTipDirect(fromUserId, recipientAddress, amount);
 
       if (transaction.status === 'completed') {
         await this.bot.editMessageText(
-          `✅ **Tip Sent!**\n\n💸 ${amount} TON sent to @${toUsername}\n🔗 TX: \`${transaction.txHash}\``,
+          `✅ **Tip Sent Successfully!**\n\n📤 **To:** ${displayName}\n💰 **Amount:** ${amount} TON\n🔗 **Transaction:** \`${transaction.txHash}\`\n\n🎉 Your tip has been delivered!`,
           {
             chat_id: message.chat.id,
             message_id: message.message_id,
@@ -94,20 +123,25 @@ export class CallbackHandler {
           }
         );
 
-        // Send private message to recipient
-        try {
-          await this.bot.sendMessage(
-            toUserId,
-            `🎉 **You Received a Tip!**\n\n💰 You received ${amount} TON!\n👤 From: @${from.username || 'Unknown'}\n🔗 TX: \`${transaction.txHash}\``,
-            { parse_mode: 'Markdown' }
-          );
-        } catch (error) {
-          console.log('Could not send private message to recipient:', error);
+        // If it's a username tip, try to notify the recipient
+        if (tipType === 'username') {
+          try {
+            const toUserId = await this.findUserByUsername(recipient, message.chat.id);
+            if (toUserId) {
+              await this.bot.sendMessage(
+                toUserId,
+                `🎉 **You Received a Tip!**\n\n💰 **Amount:** ${amount} TON\n👤 **From:** @${from.username || 'Unknown'}\n🔗 **TX:** \`${transaction.txHash}\``,
+                { parse_mode: 'Markdown' }
+              );
+            }
+          } catch (error) {
+            console.log('Could not send private message to recipient:', error);
+          }
         }
 
       } else {
         await this.bot.editMessageText(
-          `❌ **Tip Failed!**\n\n${transaction.status === 'failed' ? 'Transaction failed.' : 'Pending...'}`,
+          `❌ **Tip Failed!**\n\n${transaction.status === 'failed' ? 'Transaction failed.' : 'Processing...'}`,
           {
             chat_id: message.chat.id,
             message_id: message.message_id
@@ -118,7 +152,7 @@ export class CallbackHandler {
     } catch (error) {
       console.error('Tip confirmation error:', error);
       await this.bot.editMessageText(
-        '❌ Tip could not be sent. Please try again.',
+        `❌ **Tip Failed!**\n\nError: ${error}`,
         {
           chat_id: message.chat.id,
           message_id: message.message_id
@@ -159,6 +193,34 @@ export class CallbackHandler {
     } catch (error) {
       console.error('User search error:', error);
       return null;
+    }
+  }
+
+  private async getUserWallet(userId: number): Promise<string | null> {
+    try {
+      const userWallet = await this.walletManager.getWalletInfo(userId);
+      return userWallet?.walletAddress || null;
+    } catch (error) {
+      console.error('Get user wallet error:', error);
+      return null;
+    }
+  }
+
+  private async processTipDirect(fromUserId: number, toAddress: string, amount: number): Promise<any> {
+    try {
+      const comment = `Tip from user ${fromUserId}: ${amount} TON`;
+      const txHash = await this.walletManager.sendTon(fromUserId, toAddress, amount, comment);
+      
+      return {
+        status: 'completed',
+        txHash: txHash
+      };
+    } catch (error) {
+      console.error('Direct tip processing error:', error);
+      return {
+        status: 'failed',
+        error: error
+      };
     }
   }
 }

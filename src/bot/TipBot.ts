@@ -16,7 +16,7 @@ export class TipBot {
     this.bot = new TelegramBot(config.token, { polling: true });
     this.tipService = new TipService();
     this.walletManager = new WalletManager();
-    this.callbackHandler = new CallbackHandler(this.bot, this.tipService);
+    this.callbackHandler = new CallbackHandler(this.bot, this.tipService, this.walletManager);
     this.setupCommands();
     this.setupHandlers();
   }
@@ -39,13 +39,18 @@ export class TipBot {
       const welcomeText = `
 🎯 **Welcome to TON Tip Bot!**
 
-Easily send TON tips in Telegram groups:
+Send TON tips easily in Telegram:
 
-🔹 \`/tip @username 1\` - Send 1 TON tip to user
+🔹 \`/tip @username 1\` - Tip to registered user
+🔹 \`/tip EQD4FPq...c3f 1\` - Tip to any wallet
 🔹 \`/connect ADDRESS\` - Connect your wallet  
 🔹 \`/balance\` - Check your balance
 
-Bot works in groups and provides public tipping!
+💡 **Two ways to tip:**
+• To @username (must be registered)
+• To any TON wallet address (no registration needed)
+
+Bot works everywhere! 🚀
       `;
       
       await this.bot.sendMessage(chatId, welcomeText, { parse_mode: 'Markdown' });
@@ -91,33 +96,48 @@ Bot works in groups and provides public tipping!
       );
     });
 
-    // Tip komutu - /tip @username amount
-    this.bot.onText(/\/tip @?(\w+) (\d+(?:\.\d+)?)/, async (msg, match) => {
+    // Tip command - supports both @username and wallet address
+    // /tip @username amount OR /tip wallet_address amount
+    this.bot.onText(/\/tip (@?\w+|[0-9A-Za-z_-]{48}|EQ[0-9A-Za-z_-]{46}) (\d+(?:\.\d+)?)/, async (msg, match) => {
       if (!msg.from || !match) return;
       
       const fromUserId = msg.from.id;
-      const toUsername = match[1];
+      const recipient = match[1];
       const amount = parseFloat(match[2]);
       const chatId = msg.chat.id;
       const messageId = msg.message_id;
       
       // Amount validation
       if (amount <= 0 || amount > 100) {
-        await this.bot.sendMessage(chatId, '❌ Invalid amount! (0.1-100 TON range)', { 
+        await this.bot.sendMessage(chatId, '❌ Invalid amount! (0.01-100 TON range)', { 
           reply_to_message_id: messageId 
         });
         return;
       }
       
-      // Self-tip check  
-      if (msg.from.username === toUsername) {
-        await this.bot.sendMessage(chatId, '🤔 You cannot tip yourself!', {
+      // Determine if recipient is username or wallet address
+      const isWalletAddress = recipient.startsWith('EQ') || recipient.length === 48;
+      const isUsername = recipient.startsWith('@') || (!isWalletAddress && recipient.length < 20);
+      
+      if (isUsername) {
+        const username = recipient.replace('@', '');
+        
+        // Self-tip check for username
+        if (msg.from.username === username) {
+          await this.bot.sendMessage(chatId, '🤔 You cannot tip yourself!', {
+            reply_to_message_id: messageId
+          });
+          return;
+        }
+        
+        await this.processTipToUsername(fromUserId, username, amount, chatId, messageId);
+      } else if (isWalletAddress) {
+        await this.processTipToAddress(fromUserId, recipient, amount, chatId, messageId);
+      } else {
+        await this.bot.sendMessage(chatId, '❌ Invalid recipient! Use @username or wallet address', {
           reply_to_message_id: messageId
         });
-        return;
       }
-      
-      await this.processTip(fromUserId, toUsername, amount, chatId, messageId);
     });
 
     // Balance command
@@ -151,16 +171,18 @@ Bot works in groups and provides public tipping!
       const helpText = `
 📖 **TON Tip Bot Commands:**
 
-🔸 \`/tip @username amount\` - Send tip
+🔸 \`/tip @username amount\` - Send tip to user
+🔸 \`/tip wallet_address amount\` - Send tip to wallet
 🔸 \`/connect ADDRESS\` - Connect wallet  
 🔸 \`/balance\` - Show balance
 🔸 \`/wallet\` - Wallet status
 
 **Usage Examples:**
-• \`/tip @john 0.5\` - Send 0.5 TON to John
-• \`/tip @alice 2\` - Send 2 TON to Alice
+• \`/tip @john 0.5\` - Send 0.5 TON to @john
+• \`/tip EQD4FPq...7Ww_c3f 1.0\` - Send 1.0 TON to wallet
+• \`/tip alice 2\` - Send 2 TON to alice (without @)
 
-💡 Bot works only in groups!
+💡 Bot works in groups and private chats!
       `;
       
       await this.bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
@@ -172,7 +194,7 @@ Bot works in groups and provides public tipping!
     });
   }
 
-  private async processTip(
+  private async processTipToUsername(
     fromUserId: number, 
     toUsername: string, 
     amount: number, 
@@ -180,35 +202,61 @@ Bot works in groups and provides public tipping!
     messageId: number
   ) {
     try {
-      // Sender wallet check
-      const senderWallet = await this.walletManager.getWalletInfo(fromUserId);
-      if (!senderWallet || !senderWallet.isConnected) {
-        await this.bot.sendMessage(chatId, '❌ Please connect your wallet first: /connect ADDRESS', {
-          reply_to_message_id: messageId
-        });
-        return;
-      }
-
-      // Balance check
-      const balance = await this.walletManager.getBalance(senderWallet.walletAddress!);
-      if (balance < amount) {
-        await this.bot.sendMessage(chatId, '❌ Insufficient balance!', {
-          reply_to_message_id: messageId
-        });
-        return;
-      }
-
-      // Tip onay butonu
+      // Tip confirmation button
       const keyboard = {
         inline_keyboard: [[
-          { text: '✅ Onayla', callback_data: `confirm_tip_${fromUserId}_${toUsername}_${amount}` },
-          { text: '❌ İptal', callback_data: `cancel_tip_${fromUserId}` }
+          { text: '✅ Confirm', callback_data: `confirm_tip_username_${fromUserId}_${toUsername}_${amount}` },
+          { text: '❌ Cancel', callback_data: `cancel_tip_${fromUserId}` }
         ]]
       };
 
       await this.bot.sendMessage(
         chatId,
-        `💸 **Tip Confirmation**\n\nDo you want to send ${amount} TON to @${toUsername}?\n\n⏰ Please confirm within 30 seconds.`,
+        `💸 **Tip Confirmation**\n\n📤 **To:** @${toUsername}\n💰 **Amount:** ${amount} TON\n\n⏰ Please confirm within 30 seconds.`,
+        {
+          reply_markup: keyboard,
+          parse_mode: 'Markdown',
+          reply_to_message_id: messageId
+        }
+      );
+
+    } catch (error) {
+      console.error('Tip process error:', error);
+      await this.bot.sendMessage(chatId, '❌ Tip could not be sent. Please try again.', {
+        reply_to_message_id: messageId
+      });
+    }
+  }
+
+  private async processTipToAddress(
+    fromUserId: number, 
+    toAddress: string, 
+    amount: number, 
+    chatId: number, 
+    messageId: number
+  ) {
+    try {
+      // Validate TON address format
+      if (!this.walletManager.isValidTonAddress(toAddress)) {
+        await this.bot.sendMessage(chatId, '❌ Invalid TON wallet address format!', {
+          reply_to_message_id: messageId
+        });
+        return;
+      }
+
+      // Tip confirmation button
+      const keyboard = {
+        inline_keyboard: [[
+          { text: '✅ Confirm', callback_data: `confirm_tip_address_${fromUserId}_${toAddress}_${amount}` },
+          { text: '❌ Cancel', callback_data: `cancel_tip_${fromUserId}` }
+        ]]
+      };
+
+      const shortAddress = `${toAddress.substring(0, 6)}...${toAddress.substring(toAddress.length - 6)}`;
+
+      await this.bot.sendMessage(
+        chatId,
+        `💸 **Tip Confirmation**\n\n📤 **To:** \`${shortAddress}\`\n💰 **Amount:** ${amount} TON\n\n⏰ Please confirm within 30 seconds.`,
         {
           reply_markup: keyboard,
           parse_mode: 'Markdown',
