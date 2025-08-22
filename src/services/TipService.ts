@@ -45,11 +45,13 @@ export class TipService {
         throw new Error('Insufficient balance');
       }
 
-      // Start TON transfer
+      // Start TON transfer from bot wallet
+      const comment = `Tip from ${request.fromUserId} to ${request.toUserId}: ${request.amount} TON`;
       const txHash = await this.walletManager.sendTon(
-        senderWallet.walletAddress!,
+        request.fromUserId,
         receiverWallet.walletAddress!,
-        request.amount
+        request.amount,
+        comment
       );
 
       transaction.txHash = txHash;
