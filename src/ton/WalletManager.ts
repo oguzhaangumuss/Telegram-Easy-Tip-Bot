@@ -14,10 +14,9 @@ export class WalletManager {
 
   async connectWallet(userId: number): Promise<string> {
     try {
-      const connectUrl = await this.tonConnect.connect({
-        bridgeUrl: 'https://bridge.tonapi.io/bridge',
-        universalUrl: 'https://app.tonkeeper.com/ton-connect'
-      });
+      const connectUrl = this.tonConnect.connect([{
+        bridgeUrl: 'https://bridge.tonapi.io/bridge'
+      }]);
 
       // Geçici mock - gerçekte TonConnect auth flow
       const mockWallet: UserWallet = {
@@ -28,7 +27,7 @@ export class WalletManager {
       };
 
       this.connectedWallets.set(userId, mockWallet);
-      return connectUrl;
+      return connectUrl || 'https://app.tonkeeper.com/ton-connect';
 
     } catch (error) {
       console.error('Wallet connection error:', error);
