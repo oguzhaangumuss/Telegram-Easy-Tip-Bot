@@ -7,11 +7,13 @@ export class CallbackHandler {
   private bot: TelegramBot;
   private tipService: TipService;
   private walletManager: WalletManager;
+  private activeTips = new Map<string, TipRequest>();
 
-  constructor(bot: TelegramBot, tipService: TipService, walletManager: WalletManager) {
+  constructor(bot: TelegramBot, tipService: TipService, walletManager: WalletManager, activeTips: Map<string, TipRequest>) {
     this.bot = bot;
     this.tipService = tipService;
     this.walletManager = walletManager;
+    this.activeTips = activeTips;
     this.setupCallbacks();
   }
 
@@ -22,13 +24,13 @@ export class CallbackHandler {
       
       if (!data || !message) return;
 
-      // Confirm tip: confirm_tip_fromUserId_toUsername_amount
-      if (data.startsWith('confirm_tip_')) {
+      // Confirm tip: confirm_shortId
+      if (data.startsWith('confirm_')) {
         await this.handleTipConfirmation(callbackQuery);
       }
       
-      // Cancel tip: cancel_tip_fromUserId
-      else if (data.startsWith('cancel_tip_')) {
+      // Cancel tip: cancel_shortId
+      else if (data.startsWith('cancel_')) {
         await this.handleTipCancellation(callbackQuery);
       }
 
@@ -39,17 +41,23 @@ export class CallbackHandler {
 
   private async handleTipConfirmation(callbackQuery: any) {
     const { data, from, message } = callbackQuery;
-    const parts = data.split('_');
-    
-    if (parts.length < 5) return;
+    const shortId = data.replace('confirm_', '');
 
-    const tipType = parts[2]; // 'username' or 'address'
-    const fromUserId = parseInt(parts[3]);
-    const recipient = parts[4];
-    const amount = parseFloat(parts[5]);
+    // Get tip data from activeTips
+    const tipRequest = this.activeTips.get(shortId);
+    if (!tipRequest) {
+      await this.bot.editMessageText(
+        '❌ Tip request expired or not found.',
+        {
+          chat_id: message.chat.id,
+          message_id: message.message_id
+        }
+      );
+      return;
+    }
 
     // Only the sender can confirm
-    if (from.id !== fromUserId) {
+    if (from.id !== tipRequest.fromUserId) {
       await this.bot.editMessageText(
         '❌ Only the sender can confirm this tip.',
         {
@@ -64,18 +72,20 @@ export class CallbackHandler {
       let recipientAddress: string;
       let displayName: string;
 
-      if (tipType === 'username') {
-        // Find user by username and get their wallet address
-        const toUserId = await this.findUserByUsername(recipient, message.chat.id);
+      // Check if it's a username tip or direct address tip
+      if (tipRequest.toUsername) {
+        // Username tip
+        const toUserId = await this.findUserByUsername(tipRequest.toUsername, message.chat.id);
         
         if (!toUserId) {
           await this.bot.editMessageText(
-            `❌ User @${recipient} not found or hasn't connected wallet.`,
+            `❌ User @${tipRequest.toUsername} not found or hasn't connected wallet.`,
             {
               chat_id: message.chat.id,
               message_id: message.message_id
             }
           );
+          this.activeTips.delete(shortId);
           return;
         }
 
@@ -83,39 +93,32 @@ export class CallbackHandler {
         const userWallet = await this.getUserWallet(toUserId);
         if (!userWallet) {
           await this.bot.editMessageText(
-            `❌ @${recipient} hasn't connected their wallet yet.`,
+            `❌ @${tipRequest.toUsername} hasn't connected their wallet yet.`,
             {
               chat_id: message.chat.id,
               message_id: message.message_id
             }
           );
+          this.activeTips.delete(shortId);
           return;
         }
 
         recipientAddress = userWallet;
-        displayName = `@${recipient}`;
+        displayName = `@${tipRequest.toUsername}`;
+      } else if (tipRequest.directAddress) {
+        // Direct wallet address tip
+        recipientAddress = tipRequest.directAddress;
+        displayName = `\`${tipRequest.directAddress.substring(0, 6)}...${tipRequest.directAddress.substring(tipRequest.directAddress.length - 6)}\``;
       } else {
-        // Direct wallet address
-        recipientAddress = recipient;
-        displayName = `\`${recipient.substring(0, 6)}...${recipient.substring(recipient.length - 6)}\``;
+        throw new Error('Invalid tip request: no recipient specified');
       }
 
-      // Create tip request
-      const tipRequest: TipRequest = {
-        fromUserId,
-        toUserId: tipType === 'username' ? await this.findUserByUsername(recipient, message.chat.id) || 0 : 0,
-        toUsername: tipType === 'username' ? recipient : undefined,
-        amount,
-        chatId: message.chat.id,
-        messageId: message.message_id
-      };
-
       // Start tip process - directly send to address
-      const transaction = await this.processTipDirect(fromUserId, recipientAddress, amount);
+      const transaction = await this.processTipDirect(tipRequest.fromUserId, recipientAddress, tipRequest.amount);
 
       if (transaction.status === 'completed') {
         await this.bot.editMessageText(
-          `✅ **Tip Sent Successfully!**\n\n📤 **To:** ${displayName}\n💰 **Amount:** ${amount} TON\n🔗 **Transaction:** \`${transaction.txHash}\`\n\n🎉 Your tip has been delivered!`,
+          `✅ **Tip Sent Successfully!**\n\n📤 **To:** ${displayName}\n💰 **Amount:** ${tipRequest.amount} TON\n🔗 **Transaction:** \`${transaction.txHash}\`\n\n🎉 Your tip has been delivered!`,
           {
             chat_id: message.chat.id,
             message_id: message.message_id,
@@ -124,13 +127,13 @@ export class CallbackHandler {
         );
 
         // If it's a username tip, try to notify the recipient
-        if (tipType === 'username') {
+        if (tipRequest.toUsername) {
           try {
-            const toUserId = await this.findUserByUsername(recipient, message.chat.id);
+            const toUserId = await this.findUserByUsername(tipRequest.toUsername, message.chat.id);
             if (toUserId) {
               await this.bot.sendMessage(
                 toUserId,
-                `🎉 **You Received a Tip!**\n\n💰 **Amount:** ${amount} TON\n👤 **From:** @${from.username || 'Unknown'}\n🔗 **TX:** \`${transaction.txHash}\``,
+                `🎉 **You Received a Tip!**\n\n💰 **Amount:** ${tipRequest.amount} TON\n👤 **From:** @${from.username || 'Unknown'}\n🔗 **TX:** \`${transaction.txHash}\``,
                 { parse_mode: 'Markdown' }
               );
             }
@@ -149,6 +152,9 @@ export class CallbackHandler {
         );
       }
 
+      // Clean up tip request
+      this.activeTips.delete(shortId);
+
     } catch (error) {
       console.error('Tip confirmation error:', error);
       await this.bot.editMessageText(
@@ -158,15 +164,29 @@ export class CallbackHandler {
           message_id: message.message_id
         }
       );
+      this.activeTips.delete(shortId);
     }
   }
 
   private async handleTipCancellation(callbackQuery: any) {
     const { data, from, message } = callbackQuery;
-    const fromUserId = parseInt(data.split('_')[2]);
+    const shortId = data.replace('cancel_', '');
+
+    // Get tip data from activeTips
+    const tipRequest = this.activeTips.get(shortId);
+    if (!tipRequest) {
+      await this.bot.editMessageText(
+        '❌ Tip request not found.',
+        {
+          chat_id: message.chat.id,
+          message_id: message.message_id
+        }
+      );
+      return;
+    }
 
     // Only the sender can cancel
-    if (from.id !== fromUserId) {
+    if (from.id !== tipRequest.fromUserId) {
       return;
     }
 
@@ -177,6 +197,9 @@ export class CallbackHandler {
         message_id: message.message_id
       }
     );
+
+    // Clean up tip request
+    this.activeTips.delete(shortId);
   }
 
   private async findUserByUsername(username: string, chatId: number): Promise<number | null> {

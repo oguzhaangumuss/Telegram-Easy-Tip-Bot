@@ -1,12 +1,12 @@
 import { Address } from '@ton/core';
 import { TonClient } from '@ton/ton';
 import { UserWallet } from '../types';
-import { BotWalletService } from '../services/BotWalletService';
+import { BotWalletServiceV5 } from '../services/BotWalletServiceV5';
 
 export class WalletManager {
   private tonClient: TonClient;
   private connectedWallets = new Map<number, UserWallet>();
-  private botWalletService: BotWalletService;
+  private botWalletService: BotWalletServiceV5;
 
   constructor() {
     // Initialize TON client for testnet
@@ -15,7 +15,7 @@ export class WalletManager {
       apiKey: process.env.TON_API_KEY
     });
     
-    this.botWalletService = new BotWalletService();
+    this.botWalletService = new BotWalletServiceV5();
     this.initializeBotWallet();
   }
 

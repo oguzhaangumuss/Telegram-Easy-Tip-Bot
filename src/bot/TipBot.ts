@@ -16,7 +16,7 @@ export class TipBot {
     this.bot = new TelegramBot(config.token, { polling: true });
     this.tipService = new TipService();
     this.walletManager = new WalletManager();
-    this.callbackHandler = new CallbackHandler(this.bot, this.tipService, this.walletManager);
+    this.callbackHandler = new CallbackHandler(this.bot, this.tipService, this.walletManager, this.activeTips);
     this.setupCommands();
     this.setupHandlers();
   }
@@ -202,11 +202,24 @@ Bot works everywhere! 🚀
     messageId: number
   ) {
     try {
+      // Generate short ID for callback data (Telegram 64 char limit)
+      const shortId = `${fromUserId.toString(36)}_${Date.now().toString(36)}_u`;
+      
+      // Store tip data temporarily
+      this.activeTips.set(shortId, {
+        fromUserId,
+        toUserId: 0, // Will be resolved later
+        toUsername: toUsername,
+        amount,
+        chatId,
+        messageId
+      });
+
       // Tip confirmation button
       const keyboard = {
         inline_keyboard: [[
-          { text: '✅ Confirm', callback_data: `confirm_tip_username_${fromUserId}_${toUsername}_${amount}` },
-          { text: '❌ Cancel', callback_data: `cancel_tip_${fromUserId}` }
+          { text: '✅ Confirm', callback_data: `confirm_${shortId}` },
+          { text: '❌ Cancel', callback_data: `cancel_${shortId}` }
         ]]
       };
 
@@ -244,11 +257,25 @@ Bot works everywhere! 🚀
         return;
       }
 
+      // Generate short ID for callback data (Telegram 64 char limit)
+      const shortId = `${fromUserId.toString(36)}_${Date.now().toString(36)}_a`;
+      
+      // Store tip data temporarily
+      this.activeTips.set(shortId, {
+        fromUserId,
+        toUserId: 0,
+        toUsername: undefined,
+        amount,
+        chatId,
+        messageId,
+        directAddress: toAddress
+      });
+
       // Tip confirmation button
       const keyboard = {
         inline_keyboard: [[
-          { text: '✅ Confirm', callback_data: `confirm_tip_address_${fromUserId}_${toAddress}_${amount}` },
-          { text: '❌ Cancel', callback_data: `cancel_tip_${fromUserId}` }
+          { text: '✅ Confirm', callback_data: `confirm_${shortId}` },
+          { text: '❌ Cancel', callback_data: `cancel_${shortId}` }
         ]]
       };
 

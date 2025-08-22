@@ -12,7 +12,7 @@
   "dependencies": {
     "@ton/core": "^0.60.0",
     "@ton/crypto": "^3.3.0",
-    "@ton/ton": "^15.0.0",
+    "@ton/ton": "^15.3.1",
     "axios": "^1.6.8",
     "dotenv": "^16.4.5",
     "node-telegram-bot-api": "^0.66.0"

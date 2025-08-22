@@ -2,6 +2,7 @@ export interface TipRequest {
   fromUserId: number;
   toUserId: number;
   toUsername?: string;
+  directAddress?: string;
   amount: number;
   chatId: number;
   messageId: number;
