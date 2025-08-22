@@ -1,56 +1,67 @@
-import { TonConnect } from '@tonconnect/sdk';
 import { Address } from '@ton/core';
+import { TonClient } from '@ton/ton';
 import { UserWallet } from '../types';
 
 export class WalletManager {
-  private tonConnect: TonConnect;
+  private tonClient: TonClient;
   private connectedWallets = new Map<number, UserWallet>();
 
   constructor() {
-    this.tonConnect = new TonConnect({
-      manifestUrl: 'https://your-domain.com/tonconnect-manifest.json'
+    // Initialize TON client for testnet
+    this.tonClient = new TonClient({
+      endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC',
+      apiKey: process.env.TON_API_KEY
     });
   }
 
-  async connectWallet(userId: number): Promise<string> {
+  async connectWallet(userId: number, walletAddress: string): Promise<boolean> {
     try {
-      const connectUrl = this.tonConnect.connect([{
-        bridgeUrl: 'https://bridge.tonapi.io/bridge'
-      }]);
+      // Validate TON address
+      if (!this.isValidTonAddress(walletAddress)) {
+        throw new Error('Invalid TON address format');
+      }
 
-      // Geçici mock - gerçekte TonConnect auth flow
-      const mockWallet: UserWallet = {
+      // Get real balance from blockchain
+      const balance = await this.getBalance(walletAddress);
+      
+      const wallet: UserWallet = {
         userId,
-        walletAddress: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c',
+        walletAddress,
         isConnected: true,
-        balance: 5.0
+        balance
       };
 
-      this.connectedWallets.set(userId, mockWallet);
-      return connectUrl || 'https://app.tonkeeper.com/ton-connect';
+      this.connectedWallets.set(userId, wallet);
+      console.log(`Wallet connected: ${walletAddress} with balance: ${balance} TON`);
+      return true;
 
     } catch (error) {
       console.error('Wallet connection error:', error);
-      throw new Error('Wallet connection failed');
+      throw new Error(`Wallet connection failed: ${error}`);
     }
   }
 
   async disconnectWallet(userId: number): Promise<void> {
-    await this.tonConnect.disconnect();
     this.connectedWallets.delete(userId);
+    console.log(`Wallet disconnected for user: ${userId}`);
   }
 
   async getWalletInfo(userId: number): Promise<UserWallet | null> {
     return this.connectedWallets.get(userId) || null;
   }
 
-  async getBalance(address: string): Promise<number> {
+  async getBalance(walletAddress: string): Promise<number> {
     try {
-      // Mock balance - gerçekte TON API'dan çek
-      return Math.random() * 10;
+      const address = Address.parse(walletAddress);
+      const balance = await this.tonClient.getBalance(address);
+      
+      // Convert from nanoTON to TON
+      const balanceInTon = Number(balance) / 1e9;
+      console.log(`Balance for ${walletAddress}: ${balanceInTon} TON`);
+      return balanceInTon;
     } catch (error) {
       console.error('Balance fetch error:', error);
-      return 0;
+      throw new Error(`Failed to get balance: ${error}`);
     }
   }
 
@@ -60,18 +71,30 @@ export class WalletManager {
     amount: number
   ): Promise<string> {
     try {
-      // Mock transaction - gerçekte TON transaction gönder
-      const mockTxHash = `mock_tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Validate addresses
+      if (!this.isValidTonAddress(fromAddress) || !this.isValidTonAddress(toAddress)) {
+        throw new Error('Invalid TON address');
+      }
+
+      // Check sender balance
+      const balance = await this.getBalance(fromAddress);
+      if (balance < amount) {
+        throw new Error(`Insufficient balance. Available: ${balance} TON, Required: ${amount} TON`);
+      }
+
+      // For now, this is a placeholder - in production you need:
+      // 1. Private key management
+      // 2. Transaction signing
+      // 3. Broadcasting to network
+      console.log(`TON Transfer initiated: ${amount} TON from ${fromAddress} to ${toAddress}`);
       
-      // Simüle edilmiş gecikme
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      console.log(`TON Transfer: ${amount} TON from ${fromAddress} to ${toAddress}`);
-      return mockTxHash;
+      // Return a temporary transaction ID
+      // In production, this should be the actual transaction hash
+      throw new Error('Transaction signing not implemented - requires private key integration');
 
     } catch (error) {
       console.error('TON transfer error:', error);
-      throw new Error('Transfer failed');
+      throw error;
     }
   }
 

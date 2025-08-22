@@ -25,7 +25,7 @@ export class TipBot {
     this.bot.setMyCommands([
       { command: 'start', description: 'Start the bot' },
       { command: 'wallet', description: 'Wallet status' },
-      { command: 'connect', description: 'Connect TON wallet' },
+      { command: 'connect', description: 'Connect TON wallet - /connect ADDRESS' },
       { command: 'tip', description: 'Send tip - /tip @username amount' },
       { command: 'balance', description: 'View balance' },
       { command: 'help', description: 'Help' }
@@ -42,7 +42,7 @@ export class TipBot {
 Easily send TON tips in Telegram groups:
 
 🔹 \`/tip @username 1\` - Send 1 TON tip to user
-🔹 \`/connect\` - Connect your wallet  
+🔹 \`/connect ADDRESS\` - Connect your wallet  
 🔹 \`/balance\` - Check your balance
 
 Bot works in groups and provides public tipping!
@@ -51,28 +51,44 @@ Bot works in groups and provides public tipping!
       await this.bot.sendMessage(chatId, welcomeText, { parse_mode: 'Markdown' });
     });
 
-    // Wallet connection
-    this.bot.onText(/\/connect/, async (msg) => {
+    // Wallet connection - /connect ADDRESS
+    this.bot.onText(/\/connect (.+)/, async (msg, match) => {
       const userId = msg.from?.id!;
       const chatId = msg.chat.id;
+      const walletAddress = match?.[1]?.trim();
       
-      try {
-        const connectUrl = await this.walletManager.connectWallet(userId);
-        
-        const keyboard = {
-          inline_keyboard: [[
-            { text: '🔗 Connect TON Wallet', url: connectUrl }
-          ]]
-        };
-        
+      if (!walletAddress) {
         await this.bot.sendMessage(
           chatId, 
-          '👛 Click the button to connect your TON wallet:', 
-          { reply_markup: keyboard }
+          '❌ Please provide your wallet address:\n`/connect EQD4FPq...`',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+      
+      try {
+        await this.walletManager.connectWallet(userId, walletAddress);
+        await this.bot.sendMessage(
+          chatId, 
+          `✅ Wallet connected successfully!\n📍 Address: \`${walletAddress}\``,
+          { parse_mode: 'Markdown' }
         );
       } catch (error) {
-        await this.bot.sendMessage(chatId, '❌ Wallet connection failed!');
+        await this.bot.sendMessage(
+          chatId, 
+          `❌ Wallet connection failed: ${error}`
+        );
       }
+    });
+
+    // Connect command without address
+    this.bot.onText(/\/connect$/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.bot.sendMessage(
+        chatId, 
+        '👛 To connect your wallet, use:\n`/connect YOUR_WALLET_ADDRESS`\n\nExample:\n`/connect EQD4FPq-sb2q4Jav1Nqk5xGb0WKs5iMuYX8ZsNBNW7Ww_c3f`',
+        { parse_mode: 'Markdown' }
+      );
     });
 
     // Tip komutu - /tip @username amount
@@ -111,7 +127,7 @@ Bot works in groups and provides public tipping!
       
       const wallet = await this.walletManager.getWalletInfo(userId);
       if (!wallet || !wallet.isConnected) {
-        await this.bot.sendMessage(chatId, '❌ Please connect your wallet first: /connect');
+        await this.bot.sendMessage(chatId, '❌ Please connect your wallet first: /connect ADDRESS');
         return;
       }
       
@@ -136,7 +152,7 @@ Bot works in groups and provides public tipping!
 📖 **TON Tip Bot Commands:**
 
 🔸 \`/tip @username amount\` - Send tip
-🔸 \`/connect\` - Connect wallet  
+🔸 \`/connect ADDRESS\` - Connect wallet  
 🔸 \`/balance\` - Show balance
 🔸 \`/wallet\` - Wallet status
 
@@ -167,7 +183,7 @@ Bot works in groups and provides public tipping!
       // Sender wallet check
       const senderWallet = await this.walletManager.getWalletInfo(fromUserId);
       if (!senderWallet || !senderWallet.isConnected) {
-        await this.bot.sendMessage(chatId, '❌ Please connect your wallet first: /connect', {
+        await this.bot.sendMessage(chatId, '❌ Please connect your wallet first: /connect ADDRESS', {
           reply_to_message_id: messageId
         });
         return;

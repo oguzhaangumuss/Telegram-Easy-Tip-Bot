@@ -10,18 +10,17 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.66.0",
-    "@tonconnect/sdk": "^3.0.0",
     "@ton/core": "^0.60.0",
     "@ton/ton": "^15.0.0",
+    "axios": "^1.6.8",
     "dotenv": "^16.4.5",
-    "axios": "^1.6.8"
+    "node-telegram-bot-api": "^0.66.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
     "@types/node-telegram-bot-api": "^0.64.4",
-    "typescript": "^5.4.2",
-    "tsx": "^4.7.1"
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.2"
   },
   "keywords": [
     "telegram",

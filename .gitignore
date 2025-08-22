@@ -193,6 +193,8 @@ pnpm-lock.yaml
 .claude
 CLAUDE.md
 Docs/
+.localStorage
 
 # TON specific
 tonconnect-manifest.json
+
