@@ -1,7 +1,6 @@
-# TON Tip Bot
-
 <div align="center">
-  <img src="public/easy-tip.png" alt="Easy Tip Bot Logo" width="200"/>
+  
+  # <img src="public/easy-tip.png" alt="Easy Tip Bot Logo" width="40" style="border-radius: 25px; vertical-align: middle;"/> TON Tip Bot
   
   <p>A Telegram bot for easy TON cryptocurrency tipping in groups.</p>
   
