@@ -18,11 +18,9 @@ export class BotWalletServiceV5 {
     try {
       console.log(`🔧 Initializing W5 Bot Wallet: ${walletAddress}`);
       
-      // Derive bot wallet keys from mnemonic
       const mnemonicArray = mnemonic.split(' ');
       this.keyPair = await mnemonicToWalletKey(mnemonicArray);
       
-      // Create W5R1 wallet contract
       const wallet = WalletContractV5R1.create({
         publicKey: this.keyPair.publicKey,
         workchain: 0
@@ -32,12 +30,6 @@ export class BotWalletServiceV5 {
       
       console.log(`✅ W5 Bot wallet initialized: ${this.botWallet.address.toString()}`);
       console.log(`📍 Expected address: ${walletAddress}`);
-      
-      // Verify addresses match
-      const generatedAddress = this.botWallet.address.toString({ bounceable: false });
-      if (generatedAddress !== walletAddress) {
-        console.warn(`⚠️  Address mismatch! Generated: ${generatedAddress}, Expected: ${walletAddress}`);
-      }
       
       return true;
     } catch (error) {
@@ -70,31 +62,21 @@ export class BotWalletServiceV5 {
         throw new Error('W5 Bot wallet not initialized');
       }
 
-      // Validate recipient address
       try {
         Address.parse(toAddress);
       } catch {
         throw new Error('Invalid recipient address format');
       }
 
-      // Check bot balance
       const botBalance = await this.getBotBalance();
-      if (botBalance < amount + 0.01) { // Include fee
+      if (botBalance < amount + 0.01) {
         throw new Error(`Insufficient bot balance. Available: ${botBalance} TON, Required: ${amount + 0.01} TON`);
       }
 
-      // Get current seqno
       const seqno = await this.botWallet.getSeqno();
       console.log(`📊 Current seqno: ${seqno}`);
 
-      // If seqno is 0, wallet needs deployment - deploy it with first transaction
-      let deployTransaction = null;
-      if (seqno === 0) {
-        console.log('🚀 Wallet not deployed, deploying with first transaction...');
-        deployTransaction = this.botWallet.createDeployment(this.keyPair.secretKey);
-      }
-
-      // Create transfer using W5 wallet
+      // Create transfer
       const transfer = this.botWallet.createTransfer({
         messages: [
           internal({
@@ -108,47 +90,54 @@ export class BotWalletServiceV5 {
         secretKey: this.keyPair.secretKey
       });
 
-      // Send deployment first if needed, then transfer
-      if (deployTransaction) {
-        console.log('📤 Sending deployment transaction...');
-        await this.botWallet.send(deployTransaction);
-        
-        // Wait a bit for deployment to confirm
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        // Update seqno after deployment
-        const newSeqno = await this.botWallet.getSeqno();
-        console.log(`✅ Wallet deployed! New seqno: ${newSeqno}`);
-        
-        // Recreate transfer with updated seqno
-        const transfer = this.botWallet.createTransfer({
-          messages: [
-            internal({
-              to: Address.parse(toAddress),
-              value: toNano(amount.toString()),
-              body: comment,
-              bounce: false
-            })
-          ],
-          seqno: newSeqno,
-          secretKey: this.keyPair.secretKey
-        });
-        
-        console.log('📤 Sending tip transaction...');
-        await this.botWallet.send(transfer);
-      } else {
-        // Send the transfer normally
-        await this.botWallet.send(transfer);
-      }
-      
-      // Generate a transaction hash (simplified for demo)
-      const txHash = `w5_tx_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+      // Send transaction
+      await this.botWallet.send(transfer);
       
       console.log(`✅ W5 Tip sent successfully: ${amount} TON to ${toAddress}`);
       console.log(`📝 Comment: ${comment}`);
-      console.log(`🔗 TX Hash: ${txHash}`);
-      
-      return txHash;
+
+      // Wait a moment for transaction to be processed
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      try {
+        // Get latest transactions to find our transaction
+        const walletAddress = this.botWallet.address.toString({ bounceable: false });
+        const transactions = await this.tonClient.getTransactions(this.botWallet.address, { limit: 5 });
+        
+        if (transactions.length > 0) {
+          // Find the most recent outgoing transaction with our comment
+          const ourTransaction = transactions.find(tx => {
+            // Check if this transaction has our comment
+            try {
+              if (tx.outMessages.size > 0) {
+                const outMsg = tx.outMessages.get(0);
+                if (outMsg && outMsg.body) {
+                  const bodyText = outMsg.body.asSlice().loadStringTail();
+                  return bodyText.includes(comment) || bodyText.includes(amount.toString());
+                }
+              }
+            } catch (e) {
+              // Ignore parsing errors
+            }
+            return false;
+          });
+
+          if (ourTransaction) {
+            const txHash = ourTransaction.hash().toString('hex');
+            const txLink = `https://testnet.tonviewer.com/transaction/${txHash}`;
+            console.log(`🔗 Transaction link: ${txLink}`);
+            return txLink;
+          }
+        }
+      } catch (error) {
+        console.log('Could not fetch transaction hash, providing wallet link instead');
+      }
+
+      // Fallback: provide wallet address link
+      const walletAddress = this.botWallet.address.toString({ bounceable: false });
+      const fallbackLink = `https://testnet.tonviewer.com/${walletAddress}`;
+      console.log(`🔗 View transactions: ${fallbackLink}`);
+      return fallbackLink;
 
     } catch (error) {
       console.error('W5 Send tip failed:', error);

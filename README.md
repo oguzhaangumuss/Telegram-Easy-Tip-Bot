@@ -1,6 +1,14 @@
 # TON Tip Bot
 
-A Telegram bot for easy TON cryptocurrency tipping in groups.
+<div align="center">
+  <img src="public/easy-tip.png" alt="Easy Tip Bot Logo" width="200"/>
+  
+  <p>A Telegram bot for easy TON cryptocurrency tipping in groups.</p>
+  
+  [![Demo Video](https://img.youtube.com/vi/BVutGKezCAU/0.jpg)](https://youtu.be/BVutGKezCAU)
+  
+  <p><strong>👆 Click to watch demo video</strong></p>
+</div>
 
 ## Features
 
